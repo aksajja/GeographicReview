@@ -1,0 +1,8 @@
+# pycache
+Experiments/__pycache__
+
+# data
+data/*
+
+# unnecessary
+MVTS
