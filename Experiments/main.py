@@ -34,10 +34,10 @@ def get_processed_input(filename: str, lag: int) -> List[pd.DataFrame]:
     
     return data,Y
 
-def get_endog_data(state_data_dir: str):
-    if Path('data/endog_combined_state_level.csv').exists():
-        with open('data/endog_combined_state_level.csv','r') as endog_combined_state_level:
-            return pd.read_csv(endog_combined_state_level,index_col=0)
+def get_endog_data(state_data_dir: str, chosen_data='tot_death'):
+    if Path(f'data/{chosen_data}_diff_combined_state_level.csv').exists():
+        with open(f'data/{chosen_data}_diff_combined_state_level.csv','r') as combined_state_level:
+            return pd.read_csv(combined_state_level,index_col=0)
     else:
         state_files = os.listdir(state_data_dir)
         cols = [_state_file.split('.')[0] for _state_file in state_files]
@@ -48,11 +48,11 @@ def get_endog_data(state_data_dir: str):
             data=data.interpolate(method='linear', limit_direction='forward', axis=0)   # Interpolation to handle missing values.
             if len(endog_df.index)<1:   # Insert index.
                 endog_df = pd.DataFrame(index=data.index,columns=cols)
-            endog_df[_state_file.split('.')[0]]=data['tot_death'].values
+            endog_df[_state_file.split('.')[0]]=data[chosen_data].values
         # Use change in tot_deaths. Drop first row with NaN.
         endog_df = endog_df.diff().iloc[1:]
-        with open('data/endog_combined_state_level.csv','w') as endog_combined_state_level:
-            endog_df.to_csv(endog_combined_state_level)
+        with open(f'data/{chosen_data}_diff_combined_state_level.csv','w') as combined_state_level:
+            endog_df.to_csv(combined_state_level)
     return endog_df
 
 def get_exog_data(state_data_dir: str):
@@ -87,7 +87,7 @@ def store_exp_results(fit_score: dict, has_exog: bool, exp_name: str) -> None:
         with open(f'data/results/{exp_name}_wo_exog.csv','w') as exp4:
             pd.DataFrame.from_dict(fit_score).to_csv(exp4)
 
-def fit_var_model(endog_data: pd.DataFrame, max_lags=None, exog_data=None):
+def fit_var_model(endog_data: pd.DataFrame, exp_name: str, max_lags=None, exog_data=None):
     from statsmodels.tsa.vector_ar.var_model import VAR
     # Hardcoded values to have consistency in models.
     train_pct = 0.9
@@ -102,7 +102,7 @@ def fit_var_model(endog_data: pd.DataFrame, max_lags=None, exog_data=None):
         exog_train_data = exog_data.iloc[:training_sample_size]
 
     test_data = endog_data.iloc[training_sample_size:]
-    print('total samples: ',total_samples,' train samples: ',endog_train_data.shape)
+    # print('total samples: ',total_samples,' train samples: ',endog_train_data.shape)
     var_model = VAR(endog_train_data,exog=exog_train_data)
     var_model_fit = var_model.fit(maxlags=max_lags,ic='hqic')
 
@@ -129,7 +129,7 @@ def fit_var_model(endog_data: pd.DataFrame, max_lags=None, exog_data=None):
         fit_score['states'].append(_state)
         fit_score['r2'].append(r2_score(test_data[_state],predictions[_state]))
     
-    store_exp_results(fit_score, exog_data is not None, 'var_exp')
+    store_exp_results(fit_score, exog_data is not None, exp_name)
     return var_model_fit, predictions, fit_score
 
 def fit_vecm_model(data: pd.DataFrame, exog_data=None):
@@ -263,9 +263,26 @@ fit_one_predict_all(state_data_dir,'Arizona')   # Experiment 1
 endog_data = get_endog_data(state_data_dir = 'data/state_level')
 exog_data = get_exog_data(state_data_dir = 'data/state_level')
 
-# var_model_fit, predictions, fit_score = fit_var_model(endog_data,2,exog_data)     # Experiment 3 with exog_data.
-# var_model_fit, predictions, fit_score = fit_var_model(endog_data,2)     # Experiment 3 without exog_data.
+# var_model_fit, predictions, fit_score = fit_var_model(endog_data,'var_deaths',2,exog_data)     # Experiment 3 with exog_data.
+# var_model_fit, predictions, fit_score = fit_var_model(endog_data,'var_deaths',2)     # Experiment 3 without exog_data.
 # vecm_model_fit, predictions, fit_score = fit_vecm_model(endog_data, exog_data)     # Experiment 4 with exog_data.
 # vecm_model_fit, predictions, fit_score = fit_vecm_model(endog_data)     # Experiment 4 without exog_data.
 
-# print('R2 score for Var is : ', fit_score)
+# Experiment 5 endog_data is mobility.
+def run_exp5():
+    endog_data = get_endog_data(state_data_dir = 'data/state_level', chosen_data='m50_index')
+    lags_list = [_lag for _lag in range(21,1,-1)]
+    var_model_fit = None
+    for _lag in lags_list:
+        try:
+            var_model_fit, predictions, fit_score = fit_var_model(endog_data,'var_mobility',_lag,exog_data)     
+            break
+        except:
+            continue
+
+    if var_model_fit is not None:
+        print('Var model fits with lag: ',var_model_fit.k_ar)
+    else:
+        print('Var model does not fit.')
+
+# run_exp5()
