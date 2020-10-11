@@ -1,4 +1,4 @@
-Experiments being performed to prove the hypothesis "*Covid is a pathwork pandemic in the US*" for the **Geographic Review**.
+Experiments being performed to prove the hypothesis "*Covid is a patchwork pandemic in the US*" for the **Geographic Review**.
 
 >1) Random forest regression on Arizona data. The regression is followed by a prediction over test data for all the states. A series of R^2 values are stored.
 >2) Random forest regression on each state over a set of time lags. The regression is followed by a prediction over test data for each instance. R^2 values are tabled.
