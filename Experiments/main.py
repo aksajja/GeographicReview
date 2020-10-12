@@ -58,12 +58,7 @@ def get_data(state_data_dir: str, chosen_data='tot_death'):
 def fit_ar_model():
     pass
 
-def store_exp_results(fit_score: dict, has_exog: bool, exp_name: str, results_dir='data/results/') -> None:
-    dir_struct = results_dir.split('/')
-    for depth in range(1,len(dir_struct)):  # List contains only folders.
-        _dir = '/'.join(dir_struct[:depth])
-        if not os.path.exists(_dir):
-            os.makedirs(_dir)
+def store_exp_results(fit_score: dict, has_exog: bool, exp_name: str) -> None:
     print(f'storing {exp_name} model results ....')
     if has_exog:
         with open(f'data/results/{exp_name}_w_exog.csv','w') as results_file:
@@ -221,6 +216,14 @@ def fit_each_w_lags(state_data_dir: str, lags_list: List[int]):
     final_df.to_csv('data/results/exp2.csv')
 
 def setup_data_dir():
+    # Setup results directory.
+    results_dir='data/results/'
+    dir_struct = results_dir.split('/')
+    for depth in range(1,len(dir_struct)):  # List contains only folders.
+        _dir = '/'.join(dir_struct[:depth])
+        if not os.path.exists(_dir):
+            os.makedirs(_dir)
+
     # Setup state directory.
     state_data_dir = 'data/state_level'
     location = state_data_dir
@@ -238,8 +241,8 @@ setup_data_dir()
 
 ## Uncomment to run an experiment.
 
-lags_list = [_lag for _lag in range(1,3)]
-fit_one_predict_all(state_data_dir,'Arizona')   # Experiment 1
+lags_list = [_lag for _lag in range(1,21)]
+# fit_one_predict_all(state_data_dir,'Arizona')   # Experiment 1
 # fit_each_w_lags(state_data_dir,lags_list)   # Experiment 2
 
 # Experiment 3 endog_data is change in tot_death.
@@ -292,8 +295,8 @@ def run_exp4(endog_series: str, exog_series=None,chosen_states=None):
         print('vecm model does not fit.')
 
 chosen_states = ['Arizona','California','Colorado','Nevada','New Mexico','Texas','Utah']
-run_exp3('tot_death', chosen_states=chosen_states)
-# run_exp4('tot_death', chosen_states=chosen_states)
+run_exp3('tot_death', exog_series='m50_index', chosen_states=chosen_states)
+# run_exp4('tot_death', exog_series='m50_index', chosen_states=chosen_states)
 
 # Experiment 5 endog_data is mobility.
-run_exp3('m50_index', chosen_states=chosen_states)
+# run_exp3('m50_index', chosen_states=chosen_states)
