@@ -34,7 +34,7 @@ def get_processed_input(filename: str, lag: int) -> List[pd.DataFrame]:
     
     return data,Y
 
-def get_endog_data(state_data_dir: str, chosen_data='tot_death'):
+def get_data(state_data_dir: str, chosen_data='tot_death'):
     if Path(f'data/{chosen_data}_diff_combined_state_level.csv').exists():
         with open(f'data/{chosen_data}_diff_combined_state_level.csv','r') as combined_state_level:
             return pd.read_csv(combined_state_level,index_col=0)
@@ -55,37 +55,22 @@ def get_endog_data(state_data_dir: str, chosen_data='tot_death'):
             endog_df.to_csv(combined_state_level)
     return endog_df
 
-def get_exog_data(state_data_dir: str):
-    if Path('data/exog_combined_state_level.csv').exists():
-        with open('data/exog_combined_state_level.csv','r') as exog_combined_state_level:
-            return pd.read_csv(exog_combined_state_level,index_col=0)
-    else:
-        state_files = os.listdir(state_data_dir)
-        cols = [_state_file.split('.')[0] for _state_file in state_files]
-        exog_df = pd.DataFrame()
-        for _state_file in state_files:   # state_files contains state filenames.
-            filename = state_data_dir+'/'+_state_file
-            data=pd.read_csv(filename,index_col=0)
-            data=data.interpolate(method='linear', limit_direction='forward', axis=0)   # Interpolation to handle missing values.
-            if len(exog_df.index)<1:   # Insert index.
-                exog_df = pd.DataFrame(index=data.index,columns=cols)
-            exog_df[_state_file.split('.')[0]]=data['m50_index'].values
-        # Use change in m50_index. Drop first row with NaN.
-        exog_df = exog_df.diff().iloc[1:]
-        with open('data/exog_combined_state_level.csv','w') as exog_combined_state_level:
-            exog_df.to_csv(exog_combined_state_level)
-    return exog_df
-
 def fit_ar_model():
     pass
 
-def store_exp_results(fit_score: dict, has_exog: bool, exp_name: str) -> None:
+def store_exp_results(fit_score: dict, has_exog: bool, exp_name: str, results_dir='data/results/') -> None:
+    dir_struct = results_dir.split('/')
+    for depth in range(1,len(dir_struct)):  # List contains only folders.
+        _dir = '/'.join(dir_struct[:depth])
+        if not os.path.exists(_dir):
+            os.makedirs(_dir)
+    print(f'storing {exp_name} model results ....')
     if has_exog:
-        with open(f'data/results/{exp_name}_w_exog.csv','w') as exp4:
-            pd.DataFrame.from_dict(fit_score).to_csv(exp4)
+        with open(f'data/results/{exp_name}_w_exog.csv','w') as results_file:
+            pd.DataFrame.from_dict(fit_score).to_csv(results_file)
     else:
-        with open(f'data/results/{exp_name}_wo_exog.csv','w') as exp4:
-            pd.DataFrame.from_dict(fit_score).to_csv(exp4)
+        with open(f'data/results/{exp_name}_wo_exog.csv','w') as results_file:
+            pd.DataFrame.from_dict(fit_score).to_csv(results_file)
 
 def fit_var_model(endog_data: pd.DataFrame, exp_name: str, max_lags=None, exog_data=None):
     from statsmodels.tsa.vector_ar.var_model import VAR
@@ -105,7 +90,7 @@ def fit_var_model(endog_data: pd.DataFrame, exp_name: str, max_lags=None, exog_d
     # print('total samples: ',total_samples,' train samples: ',endog_train_data.shape)
     var_model = VAR(endog_train_data,exog=exog_train_data)
     var_model_fit = var_model.fit(maxlags=max_lags,ic='hqic')
-
+    # print(f'MaxLags:{max_lags}, Fitted lag order:{var_model_fit.k_ar}, Non-zero coefs:{var_model_fit.coefs}')
     lag_order = var_model_fit.k_ar
     num_endog_vars = len(endog_data.columns)
     predictions = np.empty((0,num_endog_vars), float)
@@ -117,22 +102,21 @@ def fit_var_model(endog_data: pd.DataFrame, exp_name: str, max_lags=None, exog_d
         else:
             exog_input = None
         if i<lag_order:
-            _forecast_input = np.concatenate((endog_train_data.iloc[i-lag_order:],test_data[:i,:]),axis=0)
-            predictions = np.append(predictions,var_model_fit.forecast(_forecast_input,steps=steps,exog_future=exog_input),axis=0)
+            _forecast_input = np.concatenate((endog_train_data.iloc[i-lag_order:],test_data.iloc[:i,:]),axis=0)
         else:
-            predictions = np.append(predictions,var_model_fit.forecast(test_data.iloc[i-lag_order:i],steps=1,exog_future=exog_input),axis=0)
-            if i == test_data.shape[0]:
-                break
+            _forecast_input = np.asarray(test_data.iloc[i-lag_order:i])
+        predictions = np.append(predictions,var_model_fit.forecast(_forecast_input,steps=steps,exog_future=exog_input),axis=0)
     
+    predictions_df = pd.DataFrame(predictions,columns=test_data.columns)
     fit_score = {'states':[],'r2':[]}
     for _state in endog_data.columns:
         fit_score['states'].append(_state)
-        fit_score['r2'].append(r2_score(test_data[_state],predictions[_state]))
+        fit_score['r2'].append(r2_score(test_data[_state],predictions_df[_state]))
     
     store_exp_results(fit_score, exog_data is not None, exp_name)
     return var_model_fit, predictions, fit_score
 
-def fit_vecm_model(data: pd.DataFrame, exog_data=None):
+def fit_vecm_model(endog_data: pd.DataFrame, exp_name: str, exog_data=None):
     from statsmodels.tsa.vector_ar.vecm import VECM
     
     # Hardcoded values to have consistency in models.
@@ -143,8 +127,6 @@ def fit_vecm_model(data: pd.DataFrame, exog_data=None):
     test_sample_size = total_samples - training_sample_size
 
     test_data = endog_data.iloc[training_sample_size:]
-    print('total samples: ',total_samples,' train samples: ',training_sample_size)
-
     num_endog_vars = len(endog_data.columns)
     predictions = np.empty((0,num_endog_vars), float)
 
@@ -168,7 +150,7 @@ def fit_vecm_model(data: pd.DataFrame, exog_data=None):
         fit_score['states'].append(_state)
         fit_score['r2'].append(r2_score(y_obs,y_pred))
 
-    store_exp_results(fit_score, exog_data is not None, 'vecm_exp')
+    store_exp_results(fit_score, exog_data is not None, exp_name)
     return vecm_model_fit, predictions, fit_score
 
 def fit_rf_model(state_data_dir: str, model_state: str, filename: str, lag: int):
@@ -260,22 +242,23 @@ lags_list = [_lag for _lag in range(1,3)]
 fit_one_predict_all(state_data_dir,'Arizona')   # Experiment 1
 # fit_each_w_lags(state_data_dir,lags_list)   # Experiment 2
 
-endog_data = get_endog_data(state_data_dir = 'data/state_level')
-exog_data = get_exog_data(state_data_dir = 'data/state_level')
+# Experiment 3 endog_data is change in tot_death.
+def run_exp3(endog_series: str, exog_series=None,chosen_states=None):
+    endog_data = get_data(state_data_dir = 'data/state_level',chosen_data=endog_series)
+    if exog_series is not None:
+        exog_data = get_data(state_data_dir = 'data/state_level',chosen_data=exog_series)
+    else:
+        exog_data = None
+    if chosen_states is not None:
+        endog_data = endog_data[chosen_states]
+        if exog_series is not None:
+            exog_data = exog_data[chosen_states]
 
-# var_model_fit, predictions, fit_score = fit_var_model(endog_data,'var_deaths',2,exog_data)     # Experiment 3 with exog_data.
-# var_model_fit, predictions, fit_score = fit_var_model(endog_data,'var_deaths',2)     # Experiment 3 without exog_data.
-# vecm_model_fit, predictions, fit_score = fit_vecm_model(endog_data, exog_data)     # Experiment 4 with exog_data.
-# vecm_model_fit, predictions, fit_score = fit_vecm_model(endog_data)     # Experiment 4 without exog_data.
-
-# Experiment 5 endog_data is mobility.
-def run_exp5():
-    endog_data = get_endog_data(state_data_dir = 'data/state_level', chosen_data='m50_index')
     lags_list = [_lag for _lag in range(21,1,-1)]
     var_model_fit = None
     for _lag in lags_list:
         try:
-            var_model_fit, predictions, fit_score = fit_var_model(endog_data,'var_mobility',_lag,exog_data)     
+            var_model_fit, predictions, fit_score = fit_var_model(endog_data,f'var_{endog_series}',_lag,exog_data)     
             break
         except:
             continue
@@ -285,4 +268,32 @@ def run_exp5():
     else:
         print('Var model does not fit.')
 
-# run_exp5()
+# Experiment 4 endog_data is change in tot_death.
+def run_exp4(endog_series: str, exog_series=None,chosen_states=None):
+    endog_data = get_data(state_data_dir = 'data/state_level',chosen_data=endog_series)
+    if exog_series is not None:
+        exog_data = get_data(state_data_dir = 'data/state_level',chosen_data=exog_series)
+    else:
+        exog_data = None
+    if chosen_states is not None:
+        endog_data = endog_data[chosen_states]
+        if exog_series is not None:
+            exog_data = exog_data[chosen_states]
+
+    vecm_model_fit = None
+    try:
+        vecm_model_fit, predictions, fit_score = fit_vecm_model(endog_data,f'vecm_{endog_series}',exog_data)     
+    except:
+        pass
+
+    if vecm_model_fit is not None:
+        print('vecm model fits with lag: ',vecm_model_fit.k_ar)
+    else:
+        print('vecm model does not fit.')
+
+chosen_states = ['Arizona','California','Colorado','Nevada','New Mexico','Texas','Utah']
+run_exp3('tot_death', chosen_states=chosen_states)
+# run_exp4('tot_death', chosen_states=chosen_states)
+
+# Experiment 5 endog_data is mobility.
+run_exp3('m50_index', chosen_states=chosen_states)
