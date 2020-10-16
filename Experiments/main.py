@@ -7,6 +7,7 @@ from sklearn.metrics import r2_score
 import pickle
 from typing import List
 import numpy as np
+from statsmodels.tsa.stattools import grangercausalitytests
 
 from utils import merge_county_data
 
@@ -26,11 +27,11 @@ def get_processed_input(filename: str, lag: int) -> List[pd.DataFrame]:
     m50_df.drop(m50_df.tail(lag-1).index,inplace=True)
     m50_index_df.drop(m50_index_df.tail(lag-1).index,inplace=True)
     data=data.drop(columns=['m50','m50_index'])
-    data['m50']=m50_df.values.tolist()
-    data['m50'] = data['m50'].str.get(0)
-    data['m50_index']=m50_df.values.tolist()
-    data['m50_index'] = data['m50_index'].str.get(0)
-    data=data.drop(columns=['tot_death'])
+    # data['m50']=m50_df.values.tolist()
+    # data['m50'] = data['m50'].str.get(0)
+    # data['m50_index']=m50_df.values.tolist()
+    # data['m50_index'] = data['m50_index'].str.get(0)
+    # data=data.drop(columns=['tot_death'])
     
     return data,Y
 
@@ -59,8 +60,11 @@ def fit_ar_model():
     pass
 
 def store_exp_results(fit_score: dict, has_exog: bool, exp_name: str) -> None:
-    print(f'storing {exp_name} model results ....')
-    if has_exog:
+    print(f'storing {exp_name} results ....')
+    if 'granger_' in exp_name: 
+        with open(f'data/results/{exp_name}.csv','w') as results_file:
+            pd.DataFrame.from_dict(fit_score,orient='index').to_csv(results_file)
+    elif has_exog:
         with open(f'data/results/{exp_name}_w_exog.csv','w') as results_file:
             pd.DataFrame.from_dict(fit_score).to_csv(results_file)
     else:
@@ -295,8 +299,23 @@ def run_exp4(endog_series: str, exog_series=None,chosen_states=None):
         print('vecm model does not fit.')
 
 chosen_states = ['Arizona','California','Colorado','Nevada','New Mexico','Texas','Utah']
-run_exp3('tot_death', exog_series='m50_index', chosen_states=chosen_states)
+# run_exp3('tot_death', exog_series='m50_index', chosen_states=chosen_states)
 # run_exp4('tot_death', exog_series='m50_index', chosen_states=chosen_states)
 
 # Experiment 5 endog_data is mobility.
 # run_exp3('m50_index', chosen_states=chosen_states)
+
+# Experiment 6 Granger causality between the chg in mobility and chg in deaths for a given state.
+def run_exp6(granger_test='ssr_chi2test', maxlag = 21):
+    tot_death = get_data(state_data_dir,chosen_data='tot_death')
+    m50_index = get_data(state_data_dir,chosen_data='m50_index')
+
+    causal_values = {}
+    for _state in tot_death.columns:
+        combined_df = pd.concat([tot_death[_state],m50_index[_state]],axis=1)
+        _result = grangercausalitytests(combined_df, maxlag= maxlag, verbose=False)
+        causal_values[_state]= [round(val[0][granger_test][1],4) for key,val in _result.items()]
+
+    store_exp_results(causal_values,False,exp_name=f'granger_{granger_test}')
+
+run_exp6()   
