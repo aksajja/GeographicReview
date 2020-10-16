@@ -10,3 +10,4 @@ Experiments being performed to prove the hypothesis "*Covid is a patchwork pande
 ### Steps -
 
 > 1) Manually copy file from [drive](https://drive.google.com/file/d/1vXaYl6PYYkgvOjFPS9bpdr7OoZeoBplC/view?usp=sharing) and save as 'data/United_States_COVID-19_Cases_and_Deaths_by_State_over_Time.csv'.
+> 2) Manually copy file from [drive](https://drive.google.com/file/d/1kozpyXDrRZzHhmwNukFqmslu714uOwRf/view?usp=sharing) and save as 'data/Mobility_upto 28-09-2020_DL.xlsx'.
