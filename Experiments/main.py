@@ -10,7 +10,7 @@ from typing import List
 import numpy as np
 from statsmodels.tsa.stattools import grangercausalitytests
 
-from utils import merge_county_data, extract_max_R2_scores
+from utils import merge_county_data, extract_max_lag_scores
 
 def get_processed_input(filename: str, lag: int) -> List[pd.DataFrame]:
     data=pd.read_csv(filename,index_col=0)
@@ -189,7 +189,7 @@ def load_model(model_dir: str,state_data_dir: str, model_state: str, regr_model_
         regr_model = fit_rf_model(state_data_dir,model_state,filename,lag)
         return regr_model
 
-def fit_one_predict_all(state_data_dir: str, model_state: str, metric_chosen, lag=17):
+def fit_one_predict_all(state_data_dir: str, model_state: str, chosen_metric, lag=17):
     regr_model_type = 'random_forest'
     loaded_model = load_model(model_dir,state_data_dir,model_state,regr_model_type,lag)
     # Use the loaded model to predict for all states.
@@ -198,18 +198,18 @@ def fit_one_predict_all(state_data_dir: str, model_state: str, metric_chosen, la
     for _state_file in state_files:   # state_files contains state filenames.
         X, Y= get_processed_input(state_data_dir+'/'+_state_file, lag)
         result = loaded_model.predict(X)
-        if metric_chosen=='r2':
+        if chosen_metric=='r2':
             corr_metric_vals = r2_score(Y, result)
-        elif metric_chosen=='pearsonr':
+        elif chosen_metric=='pearsonr':
             corr_metric_vals = pearsonr(Y['tot_death'], result)[0]
         r2_dict[_state_file.split('.')[0]]=corr_metric_vals
-    Final=pd.DataFrame.from_dict({'State':list(r2_dict.keys()),f'{metric_chosen}_error':list(r2_dict.values())})
-    Final.to_csv(f'data/results/exp1_{metric_chosen}.csv')
+    Final=pd.DataFrame.from_dict({'State':list(r2_dict.keys()),f'{chosen_metric}_error':list(r2_dict.values())})
+    Final.to_csv(f'data/results/exp1_{chosen_metric}.csv')
 
-def fit_each_w_lags(state_data_dir: str, metric_chosen, lags_list: List[int]):
+def fit_each_w_lags(state_data_dir: str, chosen_metric, lags_list: List[int]):
     regr_model_type = 'random_forest'
     state_files = os.listdir(state_data_dir)
-    cols = [f'Lag_{_lag}_{metric_chosen}' for _lag in lags_list]
+    cols = [f'Lag_{_lag}_{chosen_metric}' for _lag in lags_list]
     final_df = pd.DataFrame(columns=cols)
     for _state_file in state_files:   # state_files contains state filenames.
         model_state = _state_file.split('.')[0]
@@ -218,14 +218,14 @@ def fit_each_w_lags(state_data_dir: str, metric_chosen, lags_list: List[int]):
             X, Y= get_processed_input(state_data_dir+'/'+_state_file,_lag)
             loaded_model = load_model(model_dir,state_data_dir,model_state,regr_model_type,_lag)
             result = loaded_model.predict(X)
-            if metric_chosen=='r2':
+            if chosen_metric=='r2':
                 corr_metric_vals = r2_score(Y, result)
-            elif metric_chosen=='pearsonr':
+            elif chosen_metric=='pearsonr':
                 corr_metric_vals = pearsonr(Y['tot_death'], result)[0]
             r2_dict[_lag]=corr_metric_vals
         final_df.loc[_state_file.split('.')[0]]=list(r2_dict.values())
-    final_df.to_csv(f'data/results/exp2_{metric_chosen}.csv')
-    extract_max_R2_scores()
+    final_df.to_csv(f'data/results/exp2_{chosen_metric}.csv')
+    extract_max_lag_scores(chosen_metric)
 
 def setup_data_dir():
     # Setup results directory.
@@ -252,11 +252,11 @@ state_data_dir = 'data/state_level'
 setup_data_dir()
 
 ## Uncomment to run an experiment.
-metric_chosen = 'pearsonr'
-# metric_chosen = 'r2'
+chosen_metric = 'pearsonr'
+# chosen_metric = 'r2'
 lags_list = [_lag for _lag in range(1,21)]
-# fit_one_predict_all(state_data_dir, 'Arizona', metric_chosen)   # Experiment 1
-# fit_each_w_lags(state_data_dir,metric_chosen,lags_list)   # Experiment 2
+# fit_one_predict_all(state_data_dir, 'Arizona', chosen_metric)   # Experiment 1
+fit_each_w_lags(state_data_dir,chosen_metric,lags_list)   # Experiment 2
 
 # Experiment 3 endog_data is change in tot_death.
 def run_exp3(endog_series: str, exog_series=None,chosen_states=None):
