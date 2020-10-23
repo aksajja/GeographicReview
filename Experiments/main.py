@@ -4,12 +4,13 @@ import pandas as pd
 from sklearn.model_selection import train_test_split
 from sklearn.ensemble import RandomForestRegressor
 from sklearn.metrics import r2_score
+from scipy.stats import pearsonr
 import pickle
 from typing import List
 import numpy as np
 from statsmodels.tsa.stattools import grangercausalitytests
 
-from utils import merge_county_data
+from utils import merge_county_data, extract_max_R2_scores
 
 def get_processed_input(filename: str, lag: int) -> List[pd.DataFrame]:
     data=pd.read_csv(filename,index_col=0)
@@ -27,11 +28,11 @@ def get_processed_input(filename: str, lag: int) -> List[pd.DataFrame]:
     m50_df.drop(m50_df.tail(lag-1).index,inplace=True)
     m50_index_df.drop(m50_index_df.tail(lag-1).index,inplace=True)
     data=data.drop(columns=['m50','m50_index'])
-    # data['m50']=m50_df.values.tolist()
-    # data['m50'] = data['m50'].str.get(0)
-    # data['m50_index']=m50_df.values.tolist()
-    # data['m50_index'] = data['m50_index'].str.get(0)
-    # data=data.drop(columns=['tot_death'])
+    data['m50']=m50_df.values.tolist()
+    data['m50'] = data['m50'].str.get(0)
+    data['m50_index']=m50_df.values.tolist()
+    data['m50_index'] = data['m50_index'].str.get(0)
+    data=data.drop(columns=['tot_death'])
     
     return data,Y
 
@@ -188,7 +189,7 @@ def load_model(model_dir: str,state_data_dir: str, model_state: str, regr_model_
         regr_model = fit_rf_model(state_data_dir,model_state,filename,lag)
         return regr_model
 
-def fit_one_predict_all(state_data_dir: str, model_state: str, lag=17):
+def fit_one_predict_all(state_data_dir: str, model_state: str, metric_chosen, lag=17):
     regr_model_type = 'random_forest'
     loaded_model = load_model(model_dir,state_data_dir,model_state,regr_model_type,lag)
     # Use the loaded model to predict for all states.
@@ -197,15 +198,18 @@ def fit_one_predict_all(state_data_dir: str, model_state: str, lag=17):
     for _state_file in state_files:   # state_files contains state filenames.
         X, Y= get_processed_input(state_data_dir+'/'+_state_file, lag)
         result = loaded_model.predict(X)
-        r2=r2_score(Y, result)
-        r2_dict[_state_file]=r2
-    Final=pd.DataFrame.from_dict({'State':list(r2_dict.keys()),'Rsquared_error':list(r2_dict.values())})
-    Final.to_csv('data/results/exp1.csv')
+        if metric_chosen=='r2':
+            corr_metric_vals = r2_score(Y, result)
+        elif metric_chosen=='pearsonr':
+            corr_metric_vals = pearsonr(Y['tot_death'], result)[0]
+        r2_dict[_state_file.split('.')[0]]=corr_metric_vals
+    Final=pd.DataFrame.from_dict({'State':list(r2_dict.keys()),f'{metric_chosen}_error':list(r2_dict.values())})
+    Final.to_csv(f'data/results/exp1_{metric_chosen}.csv')
 
-def fit_each_w_lags(state_data_dir: str, lags_list: List[int]):
+def fit_each_w_lags(state_data_dir: str, metric_chosen, lags_list: List[int]):
     regr_model_type = 'random_forest'
     state_files = os.listdir(state_data_dir)
-    cols = [f'Lag_{_lag}_r2' for _lag in lags_list]
+    cols = [f'Lag_{_lag}_{metric_chosen}' for _lag in lags_list]
     final_df = pd.DataFrame(columns=cols)
     for _state_file in state_files:   # state_files contains state filenames.
         model_state = _state_file.split('.')[0]
@@ -214,10 +218,14 @@ def fit_each_w_lags(state_data_dir: str, lags_list: List[int]):
             X, Y= get_processed_input(state_data_dir+'/'+_state_file,_lag)
             loaded_model = load_model(model_dir,state_data_dir,model_state,regr_model_type,_lag)
             result = loaded_model.predict(X)
-            r2=r2_score(Y, result)
-            r2_dict[_lag]=r2
-        final_df.loc[_state_file]=list(r2_dict.values())
-    final_df.to_csv('data/results/exp2.csv')
+            if metric_chosen=='r2':
+                corr_metric_vals = r2_score(Y, result)
+            elif metric_chosen=='pearsonr':
+                corr_metric_vals = pearsonr(Y['tot_death'], result)[0]
+            r2_dict[_lag]=corr_metric_vals
+        final_df.loc[_state_file.split('.')[0]]=list(r2_dict.values())
+    final_df.to_csv(f'data/results/exp2_{metric_chosen}.csv')
+    extract_max_R2_scores()
 
 def setup_data_dir():
     # Setup results directory.
@@ -244,10 +252,11 @@ state_data_dir = 'data/state_level'
 setup_data_dir()
 
 ## Uncomment to run an experiment.
-
+metric_chosen = 'pearsonr'
+# metric_chosen = 'r2'
 lags_list = [_lag for _lag in range(1,21)]
-# fit_one_predict_all(state_data_dir,'Arizona')   # Experiment 1
-# fit_each_w_lags(state_data_dir,lags_list)   # Experiment 2
+# fit_one_predict_all(state_data_dir, 'Arizona', metric_chosen)   # Experiment 1
+# fit_each_w_lags(state_data_dir,metric_chosen,lags_list)   # Experiment 2
 
 # Experiment 3 endog_data is change in tot_death.
 def run_exp3(endog_series: str, exog_series=None,chosen_states=None):
@@ -318,4 +327,4 @@ def run_exp6(granger_test='ssr_chi2test', maxlag = 21):
 
     store_exp_results(causal_values,False,exp_name=f'granger_{granger_test}')
 
-run_exp6()   
+# run_exp6()   

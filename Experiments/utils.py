@@ -27,3 +27,9 @@ def merge_county_data(state_level_dir: str):
             mergedDf = sub2.merge(sub3, left_index=True, right_index=True)
             mergedDf=mergedDf.drop(columns=['State'])
             mergedDf.to_csv('data/state_level/'+_state+'.csv')
+
+def extract_max_R2_scores():
+    with open('data/results/exp2.csv','r') as _results_file:
+        r_df = pd.read_csv(_results_file,index_col=0)
+        max_df = r_df.max(axis=1)
+        max_df.to_csv('data/results/exp2_max.csv')
