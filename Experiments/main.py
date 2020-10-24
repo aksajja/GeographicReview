@@ -256,7 +256,7 @@ chosen_metric = 'pearsonr'
 # chosen_metric = 'r2'
 lags_list = [_lag for _lag in range(1,21)]
 # fit_one_predict_all(state_data_dir, 'Arizona', chosen_metric)   # Experiment 1
-fit_each_w_lags(state_data_dir,chosen_metric,lags_list)   # Experiment 2
+# fit_each_w_lags(state_data_dir,chosen_metric,lags_list)   # Experiment 2
 
 # Experiment 3 endog_data is change in tot_death.
 def run_exp3(endog_series: str, exog_series=None,chosen_states=None):
@@ -315,9 +315,11 @@ chosen_states = ['Arizona','California','Colorado','Nevada','New Mexico','Texas'
 # run_exp3('m50_index', chosen_states=chosen_states)
 
 # Experiment 6 Granger causality between the chg in mobility and chg in deaths for a given state.
-def run_exp6(granger_test='ssr_chi2test', maxlag = 21):
-    tot_death = get_data(state_data_dir,chosen_data='tot_death')
-    m50_index = get_data(state_data_dir,chosen_data='m50_index')
+def run_exp6(window=['2020-06-02','2020-08-02'], granger_test='ssr_chi2test', maxlag = 10):
+
+    date_list = pd.date_range(start=window[0],end=window[1]).strftime("%Y-%m-%d").tolist()
+    tot_death = get_data(state_data_dir,chosen_data='tot_death').loc[date_list]
+    m50_index = get_data(state_data_dir,chosen_data='m50_index').loc[date_list]
 
     causal_values = {}
     for _state in tot_death.columns:
