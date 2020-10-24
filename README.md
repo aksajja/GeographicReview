@@ -6,7 +6,9 @@ Experiments being performed to prove the hypothesis "*Covid is a patchwork pande
 >>   Note - This experiment is run with and without exogenous data ('change in m50_index').
 >4) Vector Error Correction Model (VECM) over the 'change in deaths' time series.  Predictions are made for <number of prediction steps(k)> using the fitted model (hence the model has to be fitted repeatedly upto nth day,for predicting k days after nth day ). R^2 values are tabled.
 >>    Note - This experiment is run with and without exogenous data ('change in m50_index').
-
+>5) Forecasting change in m50_index using the VAR modeling as in exp3.
+>6) Granger causality between the change in mobility and change in deaths over a series of lags for a chosen window.
+ 
 ### Steps -
 
 > 1) Manually copy file from [drive](https://drive.google.com/file/d/1vXaYl6PYYkgvOjFPS9bpdr7OoZeoBplC/view?usp=sharing) and save as 'data/United_States_COVID-19_Cases_and_Deaths_by_State_over_Time.csv'.
