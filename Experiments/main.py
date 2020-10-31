@@ -176,7 +176,7 @@ def fit_rf_model(state_data_dir: str, model_state: str, filename: str, lag: int)
 #         return fit_vecm_model(data)
 
 
-def load_model(model_dir: str,state_data_dir: str, model_state: str, regr_model_type: str, lag: int):
+def load_model(model_dir: str,state_data_dir: str, model_state: str, regr_model_type: str, lag: int, exog_series=None):
     filename = f'{model_dir}/{regr_model_type}/{model_state}/{model_state}_lag_{lag}.sav'
     model_dir_struct = filename.split('/')
     for depth in range(1,len(model_dir_struct)):  # List contains only folders.
@@ -185,26 +185,86 @@ def load_model(model_dir: str,state_data_dir: str, model_state: str, regr_model_
             os.makedirs(_dir)
     if Path(filename).exists():
         return pickle.load(open(filename, 'rb'))
-    else:
+    elif regr_model_type=='random_forest':
         regr_model = fit_rf_model(state_data_dir,model_state,filename,lag)
         return regr_model
+    elif regr_model_type=='arima':
+        endog_data = get_data(state_data_dir)[model_state]
+        if exog_series is not None:
+            exog_data = get_data(state_data_dir,chosen_data=exog_series)[model_state]
+        else:
+            exog_data = None
+        regr_model = fit_arima_model(endog_data,f'one_to_all_{regr_model_type}',exog_data=exog_data)    # Fitted to Initial training data.
+        return regr_model
 
-def fit_one_predict_all(state_data_dir: str, model_state: str, chosen_metric, lag=17):
-    regr_model_type = 'random_forest'
-    loaded_model = load_model(model_dir,state_data_dir,model_state,regr_model_type,lag)
-    # Use the loaded model to predict for all states.
+def fit_arima_model(model_state: str, endog_data: pd.DataFrame, exp_name: str, exog_data=None):
+    from statsmodels.tsa.arima.model import ARIMA
+    # Hardcoded values to have consistency in models.
+    train_pct = 0.9
+    steps = 1
+    all_states = endog_data.columns
+    total_samples = len(endog_data.index)
+    training_sample_size = int(train_pct*total_samples)
+    test_samples = total_samples - training_sample_size
+    
+    num_endog_vars = len(endog_data.columns)
+    endog_train_data = endog_data.iloc[:training_sample_size]
+    exog_train_data = None
+    if exog_data is not None:
+        exog_train_data = exog_data.iloc[:training_sample_size]
+
+    test_data = endog_data.iloc[training_sample_size:]
+    history = endog_train_data.copy()
+    for _col in history.columns:
+        history[_col].values[:training_sample_size]=history[model_state].values[:training_sample_size]
+    history.index = pd.DatetimeIndex(history.index).to_period('D')
+    predictions = pd.DataFrame(columns=endog_train_data.columns)
+    for t in range(len(test_data)):
+        each_day_predictions = []
+        obs = []
+        for _state in all_states:   # state_files contains state filenames.
+            model = ARIMA(history[_state],exog=exog_train_data)
+            model_fit = model.fit()
+            output = model_fit.forecast(steps=steps)
+            yhat = output.iloc[0]
+            each_day_predictions.append(yhat)
+        history.loc[history.index[-1]+pd.offsets.Day(1)]=test_data.iloc[t]
+        predictions.loc[history.index[-1]+pd.offsets.Day(1)] = each_day_predictions
+        
+    return predictions,test_data
+
+def fit_one_predict_all(state_data_dir: str, model_state: str, chosen_metric, lag=17, regr_model_type = 'random_forest',exog_series=None):
     r2_dict = {}
-    state_files = os.listdir(state_data_dir)
-    for _state_file in state_files:   # state_files contains state filenames.
-        X, Y= get_processed_input(state_data_dir+'/'+_state_file, lag)
-        result = loaded_model.predict(X)
-        if chosen_metric=='r2':
-            corr_metric_vals = r2_score(Y, result)
-        elif chosen_metric=='pearsonr':
-            corr_metric_vals = pearsonr(Y['tot_death'], result)[0]
-        r2_dict[_state_file.split('.')[0]]=corr_metric_vals
+    if regr_model_type=='random_forest':
+        loaded_model = load_model(model_dir,state_data_dir,model_state,regr_model_type,lag)
+        # Use the loaded model to predict for all states.
+        state_files = os.listdir(state_data_dir)
+        for _state_file in state_files:   # state_files contains state filenames.
+            X, Y= get_processed_input(state_data_dir+'/'+_state_file, lag)
+            result = loaded_model.predict(X)
+            if chosen_metric=='r2':
+                corr_metric_vals = r2_score(Y, result)
+            elif chosen_metric=='pearsonr':
+                corr_metric_vals = pearsonr(Y['tot_death'], result)[0]
+            r2_dict[_state_file.split('.')[0]]=corr_metric_vals
+    elif regr_model_type=='arima':
+        endog_data = get_data(state_data_dir) # ToDo: Don't use default selection of endog_data.
+        exog_data = None
+        if exog_series is not None:
+            exog_data = get_data(state_data_dir,chosen_data=exog_series)
+        predictions,Y = fit_arima_model(model_state, endog_data,f'fit_one_to_all_{regr_model_type}',exog_data)
+        
+        for _state in endog_data.columns:
+            if chosen_metric=='r2':
+                corr_metric_vals = r2_score(Y[_state], predictions[_state])
+            elif chosen_metric=='pearsonr':
+                corr_metric_vals = pearsonr(Y[_state], predictions[_state])[0]
+            r2_dict[_state]=corr_metric_vals
+    
     Final=pd.DataFrame.from_dict({'State':list(r2_dict.keys()),f'{chosen_metric}_error':list(r2_dict.values())})
-    Final.to_csv(f'data/results/exp1_{chosen_metric}.csv')
+    result_location = f'data/results/fit_one_to_all_{regr_model_type}_{chosen_metric}.csv'
+    Final.to_csv(result_location)
+    print(f'Stored results to {result_location}')
 
 def fit_each_w_lags(state_data_dir: str, chosen_metric, lags_list: List[int]):
     regr_model_type = 'random_forest'
@@ -253,6 +313,7 @@ setup_data_dir()
 
 ## Uncomment to run an experiment.
 chosen_metric = 'pearsonr'
+chosen_model_state = 'Arizona'
 # chosen_metric = 'r2'
 lags_list = [_lag for _lag in range(1,21)]
 # fit_one_predict_all(state_data_dir, 'Arizona', chosen_metric)   # Experiment 1
@@ -315,7 +376,7 @@ chosen_states = ['Arizona','California','Colorado','Nevada','New Mexico','Texas'
 # run_exp3('m50_index', chosen_states=chosen_states)
 
 # Experiment 6 Granger causality between the chg in mobility and chg in deaths for a given state.
-def run_exp6(window=['2020-06-02','2020-08-02'], granger_test='ssr_chi2test', maxlag = 10):
+def run_exp6(window=['2020-06-02','2020-08-02'], granger_test='ssr_chi2test', maxlag = 19):
 
     date_list = pd.date_range(start=window[0],end=window[1]).strftime("%Y-%m-%d").tolist()
     tot_death = get_data(state_data_dir,chosen_data='tot_death').loc[date_list]
@@ -329,4 +390,6 @@ def run_exp6(window=['2020-06-02','2020-08-02'], granger_test='ssr_chi2test', ma
 
     store_exp_results(causal_values,False,exp_name=f'granger_{granger_test}')
 
-# run_exp6()   
+# run_exp6()
+
+# fit_one_predict_all(state_data_dir,chosen_model_state,chosen_metric='r2',regr_model_type='arima')   
