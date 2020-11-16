@@ -197,6 +197,45 @@ def load_model(model_dir: str,state_data_dir: str, model_state: str, regr_model_
         regr_model = fit_arima_model(endog_data,f'one_to_all_{regr_model_type}',exog_data=exog_data)    # Fitted to Initial training data.
         return regr_model
 
+def fit_arma_model(model_state: str, endog_data: pd.DataFrame, exp_name: str, exog_data=None):
+    import warnings
+    warnings.filterwarnings('ignore', 'statsmodels.tsa.arima_model.ARMA',
+                            FutureWarning)
+    from statsmodels.tsa.arima_model import ARMA
+    # Hardcoded values to have consistency in models.
+    train_pct = 0.9
+    steps = 1
+    all_states = endog_data.columns
+    total_samples = len(endog_data.index)
+    training_sample_size = int(train_pct*total_samples)
+    test_samples = total_samples - training_sample_size
+    
+    num_endog_vars = len(endog_data.columns)
+    endog_train_data = endog_data.iloc[:training_sample_size]
+    exog_train_data = None
+    if exog_data is not None:
+        exog_train_data = exog_data.iloc[:training_sample_size]
+
+    test_data = endog_data.iloc[training_sample_size:]
+    history = endog_train_data.copy()
+    for _col in history.columns:
+        history[_col].values[:training_sample_size]=history[model_state].values[:training_sample_size]
+    history.index = pd.DatetimeIndex(history.index).to_period('D')
+    predictions = pd.DataFrame(columns=endog_train_data.columns)
+    for t in range(len(test_data)):
+        each_day_predictions = []
+        obs = []
+        for _state in all_states:   # state_files contains state filenames.
+            model = ARMA(history[_state],order=(17,1),exog=exog_train_data)
+            model_fit = model.fit(maxiter=5)
+            output = model_fit.forecast(steps=steps)
+            yhat = output[0][0]
+            each_day_predictions.append(yhat)
+        history.loc[history.index[-1]+pd.offsets.Day(1)]=test_data.iloc[t]
+        predictions.loc[history.index[-1]+pd.offsets.Day(1)] = each_day_predictions
+        
+    return predictions,test_data
+
 def fit_arima_model(model_state: str, endog_data: pd.DataFrame, exp_name: str, exog_data=None):
     from statsmodels.tsa.arima.model import ARIMA
     # Hardcoded values to have consistency in models.
@@ -223,7 +262,8 @@ def fit_arima_model(model_state: str, endog_data: pd.DataFrame, exp_name: str, e
         each_day_predictions = []
         obs = []
         for _state in all_states:   # state_files contains state filenames.
-            model = ARIMA(history[_state],exog=exog_train_data)
+            print(f'{t} day for {_state}')
+            model = ARIMA(history[_state],order=(7,0,1),exog=exog_train_data)
             model_fit = model.fit()
             output = model_fit.forecast(steps=steps)
             yhat = output.iloc[0]
@@ -253,6 +293,19 @@ def fit_one_predict_all(state_data_dir: str, model_state: str, chosen_metric, la
         if exog_series is not None:
             exog_data = get_data(state_data_dir,chosen_data=exog_series)
         predictions,Y = fit_arima_model(model_state, endog_data,f'fit_one_to_all_{regr_model_type}',exog_data)
+        
+        for _state in endog_data.columns:
+            if chosen_metric=='r2':
+                corr_metric_vals = r2_score(Y[_state], predictions[_state])
+            elif chosen_metric=='pearsonr':
+                corr_metric_vals = pearsonr(Y[_state], predictions[_state])[0]
+            r2_dict[_state]=corr_metric_vals
+    elif regr_model_type=='arma':
+        endog_data = get_data(state_data_dir) # ToDo: Don't use default selection of endog_data.
+        exog_data = None
+        if exog_series is not None:
+            exog_data = get_data(state_data_dir,chosen_data=exog_series)
+        predictions,Y = fit_arma_model(model_state, endog_data,f'fit_one_to_all_{regr_model_type}',exog_data)
         
         for _state in endog_data.columns:
             if chosen_metric=='r2':
@@ -312,9 +365,9 @@ state_data_dir = 'data/state_level'
 setup_data_dir()
 
 ## Uncomment to run an experiment.
-chosen_metric = 'pearsonr'
+# chosen_metric = 'pearsonr'
 chosen_model_state = 'Arizona'
-# chosen_metric = 'r2'
+chosen_metric = 'r2'
 lags_list = [_lag for _lag in range(1,21)]
 # fit_one_predict_all(state_data_dir, 'Arizona', chosen_metric)   # Experiment 1
 # fit_each_w_lags(state_data_dir,chosen_metric,lags_list)   # Experiment 2
