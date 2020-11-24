@@ -10,7 +10,7 @@ from typing import List
 import numpy as np
 from statsmodels.tsa.stattools import grangercausalitytests
 
-from utils import merge_county_data, extract_max_lag_scores
+from utils import merge_county_data, extract_max_lag_scores, extract_significant_chi2_statistic
 
 def get_processed_input(filename: str, lag: int) -> List[pd.DataFrame]:
     data=pd.read_csv(filename,index_col=0)
@@ -64,7 +64,7 @@ def store_exp_results(fit_score: dict, has_exog: bool, exp_name: str) -> None:
     print(f'storing {exp_name} results ....')
     if 'granger_' in exp_name: 
         with open(f'data/results/{exp_name}.csv','w') as results_file:
-            pd.DataFrame.from_dict(fit_score,orient='index').to_csv(results_file)
+            pd.DataFrame.from_dict(fit_score,orient='index',columns=['chi2_val','lag']).to_csv(results_file)
     elif has_exog:
         with open(f'data/results/{exp_name}_w_exog.csv','w') as results_file:
             pd.DataFrame.from_dict(fit_score).to_csv(results_file)
@@ -429,20 +429,26 @@ chosen_states = ['Arizona','California','Colorado','Nevada','New Mexico','Texas'
 # run_exp3('m50_index', chosen_states=chosen_states)
 
 # Experiment 6 Granger causality between the chg in mobility and chg in deaths for a given state.
-def run_exp6(window=['2020-06-02','2020-08-02'], granger_test='ssr_chi2test', maxlag = 19):
+def run_exp6(window=['2020-03-02','2020-08-02'], granger_test='ssr_chi2test', maxlag = 19):
 
     date_list = pd.date_range(start=window[0],end=window[1]).strftime("%Y-%m-%d").tolist()
-    tot_death = get_data(state_data_dir,chosen_data='tot_death').loc[date_list]
-    m50_index = get_data(state_data_dir,chosen_data='m50_index').loc[date_list]
+    tot_death = get_data(state_data_dir,chosen_data='tot_death')
+    m50_index = get_data(state_data_dir,chosen_data='m50_index')
 
     causal_values = {}
+    causal_p_values = {}
     for _state in tot_death.columns:
         combined_df = pd.concat([tot_death[_state],m50_index[_state]],axis=1)
         _result = grangercausalitytests(combined_df, maxlag= maxlag, verbose=False)
-        causal_values[_state]= [round(val[0][granger_test][1],4) for key,val in _result.items()]
+        causal_values[_state]= [round(val[0][granger_test][0],4) for key,val in _result.items()]
+        causal_p_values[_state]= [round(val[0][granger_test][1],4) for key,val in _result.items()]
 
-    store_exp_results(causal_values,False,exp_name=f'granger_{granger_test}')
+    causal_values_df = pd.DataFrame.from_dict(causal_values, orient='index')
+    causal_p_values_df = pd.DataFrame.from_dict(causal_p_values, orient='index')
+    chi2_dict = extract_significant_chi2_statistic(causal_values_df, causal_p_values_df)
+    
+    store_exp_results(chi2_dict,False,exp_name=f'granger_{granger_test}')
 
-# run_exp6()
+run_exp6()
 
 # fit_one_predict_all(state_data_dir,chosen_model_state,chosen_metric='r2',regr_model_type='arima')   

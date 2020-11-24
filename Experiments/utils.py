@@ -1,5 +1,6 @@
 from constants import us_state_abbrev
 import pandas as pd
+import numpy as np
 from pathlib import Path
 
 def merge_county_data(state_level_dir: str):
@@ -33,3 +34,15 @@ def extract_max_lag_scores(chosen_metric: str):
         r_df = pd.read_csv(_results_file,index_col=0)
         max_df = r_df.max(axis=1)
         max_df.to_csv(f'data/results/exp2_{chosen_metric}_max.csv')
+
+def extract_significant_chi2_statistic(causal_values_df, causal_p_values_df):
+    causal_p_values = causal_p_values_df.to_numpy()
+    mx = np.ma.masked_array(causal_p_values, mask=causal_p_values==0)
+    min_indices = mx.argmin(axis=1)
+    
+    chi2_vals = causal_values_df.to_numpy()
+    selected_dict = dict()
+    states = causal_values_df.index
+    for _row in range(chi2_vals.shape[0]):
+        selected_dict[states[_row]]=chi2_vals[_row][min_indices[_row]],min_indices[_row]
+    return selected_dict
