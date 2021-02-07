@@ -12,27 +12,57 @@ from statsmodels.tsa.stattools import grangercausalitytests
 
 from utils import merge_county_data, extract_max_lag_scores, extract_significant_chi2_statistic
 
+def normalize_with_population(state,X,Y):
+    million = 1000000
+    df = pd.read_excel('data/population.xlsx', header=1)
+    df['State'] = df['State'].map(lambda x: x.lstrip('.').rstrip('.'))
+    population=np.array(df)
+    idx=np.where(population==state)[0][0]
+    norm=population[idx][1]/million     # Population in millions
+    X['new_case'] = X['new_case'].div(norm).round(4)
+    X['new_death'] = X['new_death'].div(norm).round(4)
+    Y = Y.div(norm).round(4)
+    
+    combined_df = X.merge(Y, how='inner', left_index=True, right_index=True)
+    combined_df.to_csv('data/normalized_state_level/'+state+'.csv')
+    return X,Y
+
+def normalize_data(state,X,Y):
+    normalized_X,normalized_Y = normalize_with_population(state,X,Y)
+    
+    return normalized_X,normalized_Y
+
 def get_processed_input(filename: str, lag: int) -> List[pd.DataFrame]:
+    # Initialize data.
     data=pd.read_csv(filename,index_col=0)
+    state=filename.split('.')[0].split('/')[-1]
     data=data.interpolate(method='linear', limit_direction='forward', axis=0)   # Interpolation to handle missing values.
     data=data.drop(columns=['state'])
     Label=data['tot_death'].to_frame()
+    data=data.drop(columns=['tot_death'])
     m50_df=pd.DataFrame(data['m50'])
     m50_index_df=pd.DataFrame(data['m50_index'])
     
+    # Difference with respect to lag.
     m50_df=m50_df.diff().iloc[1:]   # Take diff and drop first row.
     m50_index_df=m50_index_df.diff().iloc[1:]   # Take diff and drop first row.
     Y=Label-Label.shift(lag)      # Eg - This is the difference b/w labels, tot_deaths, of day1 and day18.
+    
+    # Normalize data.
+    # data,Y = normalize_data(state,data,Y)
+    
+    # Data alignment.
     Y.drop(Y.head(lag).index,inplace=True)    # Drop head elements = lag_order. 
     data.drop(data.tail(lag).index,inplace=True)  # Drop tail elements = lag_order.
     m50_df.drop(m50_df.tail(lag-1).index,inplace=True)
     m50_index_df.drop(m50_index_df.tail(lag-1).index,inplace=True)
     data=data.drop(columns=['m50','m50_index'])
+    
+    # Reassign values to DataFrame.
     data['m50']=m50_df.values.tolist()
     data['m50'] = data['m50'].str.get(0)
     data['m50_index']=m50_df.values.tolist()
     data['m50_index'] = data['m50_index'].str.get(0)
-    data=data.drop(columns=['tot_death'])
     
     return data,Y
 
@@ -194,7 +224,7 @@ def load_model(model_dir: str,state_data_dir: str, model_state: str, regr_model_
             exog_data = get_data(state_data_dir,chosen_data=exog_series)[model_state]
         else:
             exog_data = None
-        regr_model = fit_arima_model(endog_data,f'one_to_all_{regr_model_type}',exog_data=exog_data)    # Fitted to Initial training data.
+        regr_model = fit_arima_model(model_state, endog_data,f'one_to_all_{regr_model_type}',exog_data=exog_data)    # Fitted to Initial training data.
         return regr_model
 
 def fit_arma_model(model_state: str, endog_data: pd.DataFrame, exp_name: str, exog_data=None):
@@ -208,7 +238,7 @@ def fit_arma_model(model_state: str, endog_data: pd.DataFrame, exp_name: str, ex
     all_states = endog_data.columns
     total_samples = len(endog_data.index)
     training_sample_size = int(train_pct*total_samples)
-    test_samples = total_samples - training_sample_size
+    test_sample_size = total_samples - training_sample_size
     
     num_endog_vars = len(endog_data.columns)
     endog_train_data = endog_data.iloc[:training_sample_size]
@@ -220,7 +250,8 @@ def fit_arma_model(model_state: str, endog_data: pd.DataFrame, exp_name: str, ex
     history = endog_train_data.copy()
     for _col in history.columns:
         history[_col].values[:training_sample_size]=history[model_state].values[:training_sample_size]
-    history.index = pd.DatetimeIndex(history.index).to_period('D')
+    history.index = pd.DatetimeIndex(history.index)
+    history.index = history.index.to_period('D')
     predictions = pd.DataFrame(columns=endog_train_data.columns)
     for t in range(len(test_data)):
         each_day_predictions = []
@@ -233,7 +264,17 @@ def fit_arma_model(model_state: str, endog_data: pd.DataFrame, exp_name: str, ex
             each_day_predictions.append(yhat)
         history.loc[history.index[-1]+pd.offsets.Day(1)]=test_data.iloc[t]
         predictions.loc[history.index[-1]+pd.offsets.Day(1)] = each_day_predictions
-        
+    
+    fit_score = {'states':[],'r2':[]}
+    for _state in endog_data.columns:
+        y_obs = test_data[:test_sample_size][_state].to_numpy()
+        y_pred = predictions[:,list(endog_data.columns).index(_state)]
+        fit_score['states'].append(_state)
+        fit_score['r2'].append(r2_score(y_obs,y_pred))
+
+    store_exp_results(fit_score, exog_data is not None, exp_name)
+
+
     return predictions,test_data
 
 def fit_arima_model(model_state: str, endog_data: pd.DataFrame, exp_name: str, exog_data=None):
@@ -244,7 +285,7 @@ def fit_arima_model(model_state: str, endog_data: pd.DataFrame, exp_name: str, e
     all_states = endog_data.columns
     total_samples = len(endog_data.index)
     training_sample_size = int(train_pct*total_samples)
-    test_samples = total_samples - training_sample_size
+    test_sample_size = total_samples - training_sample_size
     
     num_endog_vars = len(endog_data.columns)
     endog_train_data = endog_data.iloc[:training_sample_size]
@@ -256,7 +297,8 @@ def fit_arima_model(model_state: str, endog_data: pd.DataFrame, exp_name: str, e
     history = endog_train_data.copy()
     for _col in history.columns:
         history[_col].values[:training_sample_size]=history[model_state].values[:training_sample_size]
-    history.index = pd.DatetimeIndex(history.index).to_period('D')
+    history.index = pd.DatetimeIndex(history.index) # Converts datatype str to Datetime
+    history.index = history.index.to_period('D')    # Converts Datetime to 0,1,2,...,n
     predictions = pd.DataFrame(columns=endog_train_data.columns)
     for t in range(len(test_data)):
         each_day_predictions = []
@@ -270,7 +312,16 @@ def fit_arima_model(model_state: str, endog_data: pd.DataFrame, exp_name: str, e
             each_day_predictions.append(yhat)
         history.loc[history.index[-1]+pd.offsets.Day(1)]=test_data.iloc[t]
         predictions.loc[history.index[-1]+pd.offsets.Day(1)] = each_day_predictions
-        
+    
+    fit_score = {'states':[],'r2':[]}
+    for _state in endog_data.columns:
+        y_obs = test_data[:test_sample_size][_state].to_numpy()
+        y_pred = predictions[:,list(endog_data.columns).index(_state)]
+        fit_score['states'].append(_state)
+        fit_score['r2'].append(r2_score(y_obs,y_pred))
+
+    store_exp_results(fit_score, exog_data is not None, exp_name)
+
     return predictions,test_data
 
 def fit_one_predict_all(state_data_dir: str, model_state: str, chosen_metric, lag=17, regr_model_type = 'random_forest',exog_series=None):
@@ -365,11 +416,13 @@ state_data_dir = 'data/state_level'
 setup_data_dir()
 
 ## Uncomment to run an experiment.
-# chosen_metric = 'pearsonr'
 chosen_model_state = 'Arizona'
-chosen_metric = 'r2'
+chosen_metric = 'r2'    # r2, pearsonr
 lags_list = [_lag for _lag in range(1,21)]
-# fit_one_predict_all(state_data_dir, 'Arizona', chosen_metric)   # Experiment 1
+regr_model_type = 'random_forest'   # random_forest, arima, arma, var, vecm.
+chosen_states = ['Arizona','California','Colorado','Nevada','New Mexico','Texas','Utah']
+
+fit_one_predict_all(state_data_dir,chosen_model_state,chosen_metric,regr_model_type='random_forest')   # Experiment 1
 # fit_each_w_lags(state_data_dir,chosen_metric,lags_list)   # Experiment 2
 
 # Experiment 3 endog_data is change in tot_death.
@@ -421,7 +474,6 @@ def run_exp4(endog_series: str, exog_series=None,chosen_states=None):
     else:
         print('vecm model does not fit.')
 
-chosen_states = ['Arizona','California','Colorado','Nevada','New Mexico','Texas','Utah']
 # run_exp3('tot_death', exog_series='m50_index', chosen_states=chosen_states)
 # run_exp4('tot_death', exog_series='m50_index', chosen_states=chosen_states)
 
@@ -449,6 +501,4 @@ def run_exp6(window=['2020-03-02','2020-08-02'], granger_test='ssr_chi2test', ma
     
     store_exp_results(chi2_dict,False,exp_name=f'granger_{granger_test}')
 
-run_exp6()
-
-# fit_one_predict_all(state_data_dir,chosen_model_state,chosen_metric='r2',regr_model_type='arima')   
+# run_exp6()
