@@ -196,16 +196,6 @@ def fit_rf_model(state_data_dir: str, model_state: str, filename: str, lag: int)
     
     return regr_model
 
-## Following function to be implemented to call regression (VAR/VECM/RF) based on cmd line argument.
-# def fit_model(model_type: str):
-#     if regr_model_type=='random_forest':
-#         return fit_rf_model()
-#     elif regr_model_type=='var':
-#         return fit_var_model(data, 8)  # ToDo: Remove hardcoded values.
-#     elif regr_model_type=='vecm':
-#         return fit_vecm_model(data)
-
-
 def load_model(model_dir: str,state_data_dir: str, model_state: str, regr_model_type: str, lag: int, exog_series=None):
     filename = f'{model_dir}/{regr_model_type}/{model_state}/{model_state}_lag_{lag}.sav'
     model_dir_struct = filename.split('/')
