@@ -13,58 +13,54 @@ from statsmodels.tsa.stattools import grangercausalitytests
 from utils import merge_county_data, extract_max_lag_scores, extract_significant_chi2_statistic
 
 def normalize_with_population(state,X,Y):
+    local_X = X.copy()
+    local_Y = Y.copy()
     million = 1000000
+    cols_to_normalize = ['new_case','new_death']
+
     df = pd.read_excel('data/population.xlsx', header=1)
     df['State'] = df['State'].map(lambda x: x.lstrip('.').rstrip('.'))
     population=np.array(df)
     idx=np.where(population==state)[0][0]
     norm=population[idx][1]/million     # Population in millions
-    X['new_case'] = X['new_case'].div(norm).round(4)
-    X['new_death'] = X['new_death'].div(norm).round(4)
-    Y = Y.div(norm).round(4)
+    for _col in local_X.columns:
+        if _col in cols_to_normalize:
+            local_X[_col] = local_X[_col].div(norm).round(4)
+    local_Y = local_Y.div(norm).round(4)
     
-    combined_df = X.merge(Y, how='inner', left_index=True, right_index=True)
+    combined_df = local_X.merge(local_Y, how='inner', left_index=True, right_index=True)
     combined_df.to_csv('data/normalized_state_level/'+state+'.csv')
-    return X,Y
+    return local_X,local_Y
 
 def normalize_data(state,X,Y):
     normalized_X,normalized_Y = normalize_with_population(state,X,Y)
     
     return normalized_X,normalized_Y
 
-def get_processed_input(filename: str, lag: int) -> List[pd.DataFrame]:
+def get_processed_input(filename: str, lag: int, chosen_label='',chosen_columns=[]) -> List[pd.DataFrame]:
     # Initialize data.
     data=pd.read_csv(filename,index_col=0)
     state=filename.split('.')[0].split('/')[-1]
     data=data.interpolate(method='linear', limit_direction='forward', axis=0)   # Interpolation to handle missing values.
     data=data.drop(columns=['state'])
-    Label=data['tot_death'].to_frame()
-    data=data.drop(columns=['tot_death'])
-    m50_df=pd.DataFrame(data['m50'])
-    m50_index_df=pd.DataFrame(data['m50_index'])
+    Label=data[chosen_label].to_frame()
+    data=data[chosen_columns]
     
-    # Difference with respect to lag.
-    m50_df=m50_df.diff().iloc[1:]   # Take diff and drop first row.
-    m50_index_df=m50_index_df.diff().iloc[1:]   # Take diff and drop first row.
-    Y=Label-Label.shift(lag)      # Eg - This is the difference b/w labels, tot_deaths, of day1 and day18.
-    
-    # Normalize data.
-    # data,Y = normalize_data(state,data,Y)
+    # Difference.
+    data_diff=data.diff()       #  Take diff of consecutive days.
+    Label_diff=Label.diff()
+    Label_diff=Label_diff.iloc[1:]   # Drop first row.
+    data_diff=data_diff.iloc[1:]   
+    Y=Label_diff-Label_diff.shift(lag)      # Eg - This is the difference b/w labels, i.e. tot_deaths, of day1 and day18.
     
     # Data alignment.
     Y.drop(Y.head(lag).index,inplace=True)    # Drop head elements = lag_order. 
-    data.drop(data.tail(lag).index,inplace=True)  # Drop tail elements = lag_order.
-    m50_df.drop(m50_df.tail(lag-1).index,inplace=True)
-    m50_index_df.drop(m50_index_df.tail(lag-1).index,inplace=True)
-    data=data.drop(columns=['m50','m50_index'])
+    data_diff.drop(data_diff.tail(lag).index,inplace=True)  # Drop tail elements = lag_order.
     
-    # Reassign values to DataFrame.
-    data['m50']=m50_df.values.tolist()
-    data['m50'] = data['m50'].str.get(0)
-    data['m50_index']=m50_df.values.tolist()
-    data['m50_index'] = data['m50_index'].str.get(0)
+    # Normalize data.
+    data_diff_norm,Y_diff_norm = normalize_data(state,data_diff,Y)
     
-    return data,Y
+    return data_diff_norm,Y_diff_norm
 
 def get_data(state_data_dir: str, chosen_data='tot_death'):
     if Path(f'data/{chosen_data}_diff_combined_state_level.csv').exists():
@@ -183,8 +179,8 @@ def fit_vecm_model(endog_data: pd.DataFrame, exp_name: str, exog_data=None):
     store_exp_results(fit_score, exog_data is not None, exp_name)
     return vecm_model_fit, predictions, fit_score
 
-def fit_rf_model(state_data_dir: str, model_state: str, filename: str, lag: int):
-    X, Y= get_processed_input(state_data_dir+f'/{model_state}.csv', lag)
+def fit_rf_model(state_data_dir: str, model_state: str, filename: str, lag: int, chosen_label='', chosen_columns=[]):
+    X, Y= get_processed_input(state_data_dir+f'/{model_state}.csv', lag,chosen_label=chosen_label,chosen_columns=chosen_columns)
     X_train, X_test, y_train, y_test = train_test_split(X, Y, test_size=0.30, random_state=42)
     regr_model = RandomForestRegressor(max_depth=2, random_state=0)
     regr_model.fit(X_train, y_train)
@@ -196,17 +192,17 @@ def fit_rf_model(state_data_dir: str, model_state: str, filename: str, lag: int)
     
     return regr_model
 
-def load_model(model_dir: str,state_data_dir: str, model_state: str, regr_model_type: str, lag: int, exog_series=None):
+def load_model(model_dir: str,state_data_dir: str, model_state: str, regr_model_type: str, lag: int, chosen_label='',chosen_columns=[], exog_series=None, force_fit=False):
     filename = f'{model_dir}/{regr_model_type}/{model_state}/{model_state}_lag_{lag}.sav'
     model_dir_struct = filename.split('/')
     for depth in range(1,len(model_dir_struct)):  # List contains only folders.
         _dir = '/'.join(model_dir_struct[:depth])
         if not os.path.exists(_dir):
             os.makedirs(_dir)
-    if Path(filename).exists():
+    if not force_fit and Path(filename).exists():
         return pickle.load(open(filename, 'rb'))
     elif regr_model_type=='random_forest':
-        regr_model = fit_rf_model(state_data_dir,model_state,filename,lag)
+        regr_model = fit_rf_model(state_data_dir,model_state,filename,lag,chosen_label=chosen_label,chosen_columns=chosen_columns)
         return regr_model
     elif regr_model_type=='arima':
         endog_data = get_data(state_data_dir)[model_state]
@@ -314,14 +310,14 @@ def fit_arima_model(model_state: str, endog_data: pd.DataFrame, exp_name: str, e
 
     return predictions,test_data
 
-def fit_one_predict_all(state_data_dir: str, model_state: str, chosen_metric, lag=17, regr_model_type = 'random_forest',exog_series=None):
+def fit_one_predict_all(state_data_dir: str, model_state: str, chosen_metric: str, chosen_label='', chosen_columns=[], lag=4, regr_model_type = 'random_forest',exog_series=None, force_fit=False):
     r2_dict = {}
     if regr_model_type=='random_forest':
-        loaded_model = load_model(model_dir,state_data_dir,model_state,regr_model_type,lag)
+        loaded_model = load_model(model_dir,state_data_dir,model_state,regr_model_type,lag,chosen_label=chosen_label,chosen_columns=chosen_columns, force_fit=force_fit)
         # Use the loaded model to predict for all states.
         state_files = os.listdir(state_data_dir)
         for _state_file in state_files:   # state_files contains state filenames.
-            X, Y= get_processed_input(state_data_dir+'/'+_state_file, lag)
+            X, Y= get_processed_input(state_data_dir+'/'+_state_file, lag,chosen_label=chosen_label,chosen_columns=chosen_columns)
             result = loaded_model.predict(X)
             if chosen_metric=='r2':
                 corr_metric_vals = r2_score(Y, result)
@@ -360,7 +356,7 @@ def fit_one_predict_all(state_data_dir: str, model_state: str, chosen_metric, la
     Final.to_csv(result_location)
     print(f'Stored results to {result_location}')
 
-def fit_each_w_lags(state_data_dir: str, chosen_metric, lags_list: List[int]):
+def fit_each_w_lags(state_data_dir: str, chosen_metric, lags_list: List[int], chosen_label='',chosen_columns=[]):
     regr_model_type = 'random_forest'
     state_files = os.listdir(state_data_dir)
     cols = [f'Lag_{_lag}_{chosen_metric}' for _lag in lags_list]
@@ -369,7 +365,7 @@ def fit_each_w_lags(state_data_dir: str, chosen_metric, lags_list: List[int]):
         model_state = _state_file.split('.')[0]
         r2_dict = {}
         for _lag in lags_list:
-            X, Y= get_processed_input(state_data_dir+'/'+_state_file,_lag)
+            X, Y= get_processed_input(state_data_dir+'/'+_state_file,_lag,chosen_label=chosen_label,chosen_columns=chosen_columns)
             loaded_model = load_model(model_dir,state_data_dir,model_state,regr_model_type,_lag)
             result = loaded_model.predict(X)
             if chosen_metric=='r2':
@@ -408,11 +404,13 @@ setup_data_dir()
 ## Uncomment to run an experiment.
 chosen_model_state = 'Arizona'
 chosen_metric = 'r2'    # r2, pearsonr
+chosen_label = 'tot_death'
+chosen_columns = ['new_case','new_death','m50']
 lags_list = [_lag for _lag in range(1,21)]
 regr_model_type = 'random_forest'   # random_forest, arima, arma, var, vecm.
 chosen_states = ['Arizona','California','Colorado','Nevada','New Mexico','Texas','Utah']
 
-fit_one_predict_all(state_data_dir,chosen_model_state,chosen_metric,regr_model_type='random_forest')   # Experiment 1
+fit_one_predict_all(state_data_dir,chosen_model_state,chosen_metric,regr_model_type=regr_model_type,chosen_label=chosen_label,chosen_columns=chosen_columns,force_fit=True)   # Experiment 1
 # fit_each_w_lags(state_data_dir,chosen_metric,lags_list)   # Experiment 2
 
 # Experiment 3 endog_data is change in tot_death.
