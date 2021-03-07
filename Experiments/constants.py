@@ -50,3 +50,7 @@ us_state_abbrev = {
     'Wisconsin': 'WI',
     'Wyoming': 'WY'
 }
+
+results_dir='data/results'
+model_dir = 'data/regr_models'
+state_data_dir = 'data/state_level'
